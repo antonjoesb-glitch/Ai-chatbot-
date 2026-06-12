@@ -13,13 +13,26 @@ import {
   User,
   X,
 } from "lucide-react";
-import { deleteConversation, sendChatMessage } from "./api";
+import {
+  type ChatAttachment,
+  deleteConversation,
+  sendChatMessage,
+} from "./api";
+
+interface MessageAttachment {
+  id: string;
+  name: string;
+  type: "file" | "image";
+  preview?: string;
+  content?: string;
+}
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  attachments?: MessageAttachment[];
 }
 
 interface Conversation {
@@ -33,6 +46,7 @@ interface Attachment {
   name: string;
   type: "file" | "image";
   preview?: string;
+  content?: string;
 }
 
 function createId() {
@@ -59,13 +73,37 @@ function ChatMessage({ message }: { message: Message }) {
         }`}
       >
         <div
-          className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+          className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed space-y-2 ${
             isUser
               ? "bg-primary text-primary-foreground rounded-tr-sm"
               : "bg-card text-card-foreground border border-border rounded-tl-sm"
           }`}
         >
-          <p style={{ whiteSpace: "pre-wrap" }}>{message.content}</p>
+          {message.attachments?.map((attachment) =>
+            attachment.type === "image" && attachment.preview ? (
+              <img
+                key={attachment.id}
+                src={attachment.preview}
+                alt={attachment.name}
+                className="max-w-full max-h-64 rounded-lg object-contain"
+              />
+            ) : (
+              <div
+                key={attachment.id}
+                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
+                  isUser
+                    ? "bg-primary-foreground/10"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                <FileText size={14} className="flex-shrink-0" />
+                <span className="truncate">{attachment.name}</span>
+              </div>
+            ),
+          )}
+          {message.content ? (
+            <p style={{ whiteSpace: "pre-wrap" }}>{message.content}</p>
+          ) : null}
         </div>
         <span className="text-xs text-muted-foreground px-1">
           {message.timestamp.toLocaleTimeString([], {
@@ -242,7 +280,11 @@ export default function App() {
     return {
       id: conversation.id,
       title: conversation.title,
-      lastMessage: lastMessage?.content.slice(0, 60) ?? "",
+      lastMessage:
+        lastMessage?.content.slice(0, 60) ||
+        (lastMessage?.attachments?.length
+          ? `📎 ${lastMessage.attachments[0].name}`
+          : ""),
       timestamp: lastMessage?.timestamp ?? new Date(),
     };
   });
@@ -300,13 +342,20 @@ export default function App() {
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
-    if (!trimmed || isTyping) return;
+    const pendingAttachments = [...attachments];
+    if ((!trimmed && pendingAttachments.length === 0) || isTyping) return;
 
     let conversationId = activeId;
+    const titleSource =
+      trimmed ||
+      pendingAttachments[0]?.name ||
+      "Shared attachment";
     if (!conversationId) {
       conversationId = createId();
       const title =
-        trimmed.length > 40 ? `${trimmed.slice(0, 40)}...` : trimmed;
+        titleSource.length > 40
+          ? `${titleSource.slice(0, 40)}...`
+          : titleSource;
       setConversations((current) => [
         { id: conversationId!, title, messages: [] },
         ...current,
@@ -314,11 +363,22 @@ export default function App() {
       setActiveId(conversationId);
     }
 
+    const messageAttachments: MessageAttachment[] = pendingAttachments.map(
+      (attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        type: attachment.type,
+        preview: attachment.preview,
+        content: attachment.content,
+      }),
+    );
+
     const userMessage: Message = {
       id: createId(),
       role: "user",
       content: trimmed,
       timestamp: new Date(),
+      attachments: messageAttachments,
     };
 
     setConversations((current) =>
@@ -330,7 +390,9 @@ export default function App() {
         };
         if (conversation.messages.length === 0) {
           updated.title =
-            trimmed.length > 40 ? `${trimmed.slice(0, 40)}...` : trimmed;
+            titleSource.length > 40
+              ? `${titleSource.slice(0, 40)}...`
+              : titleSource;
         }
         return updated;
       }),
@@ -341,8 +403,21 @@ export default function App() {
     setIsTyping(true);
     setError(null);
 
+    const apiAttachments: ChatAttachment[] = pendingAttachments.map(
+      (attachment) => ({
+        type: attachment.type,
+        name: attachment.name,
+        data: attachment.preview,
+        content: attachment.content,
+      }),
+    );
+
     try {
-      const responseText = await sendChatMessage(conversationId, trimmed);
+      const { response: responseText, title: generatedTitle } = await sendChatMessage(
+        conversationId,
+        trimmed,
+        apiAttachments,
+      );
       const assistantMessage: Message = {
         id: createId(),
         role: "assistant",
@@ -351,14 +426,17 @@ export default function App() {
       };
 
       setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === conversationId
-            ? {
-                ...conversation,
-                messages: [...conversation.messages, assistantMessage],
-              }
-            : conversation,
-        ),
+        current.map((conversation) => {
+          if (conversation.id !== conversationId) return conversation;
+          const updated = {
+            ...conversation,
+            messages: [...conversation.messages, assistantMessage],
+          };
+          if (generatedTitle) {
+            updated.title = generatedTitle;
+          }
+          return updated;
+        }),
       );
     } catch (sendError) {
       const message =
@@ -369,7 +447,7 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
-  }, [activeId, input, isTyping]);
+  }, [activeId, attachments, input, isTyping]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -384,13 +462,22 @@ export default function App() {
     event.target.style.height = `${Math.min(event.target.scrollHeight, 160)}px`;
   };
 
+  const isTextFile = (file: File) =>
+    file.type.startsWith("text/") ||
+    /\.(txt|md|json|csv|js|ts|tsx|jsx|py|html|css|xml|yaml|yml)$/i.test(
+      file.name,
+    );
+
   const handleAttachmentChange = (
     event: React.ChangeEvent<HTMLInputElement>,
-    type: "file" | "image",
+    pickerType: "file" | "image",
   ) => {
     Array.from(event.target.files ?? []).forEach((file) => {
       const id = createId();
-      if (type === "image" && file.type.startsWith("image/")) {
+      const isImage =
+        file.type.startsWith("image/") || pickerType === "image";
+
+      if (isImage) {
         const reader = new FileReader();
         reader.onload = (loadEvent) => {
           setAttachments((current) => [
@@ -404,12 +491,30 @@ export default function App() {
           ]);
         };
         reader.readAsDataURL(file);
-      } else {
-        setAttachments((current) => [
-          ...current,
-          { id, name: file.name, type: "file" },
-        ]);
+        return;
       }
+
+      if (isTextFile(file)) {
+        const reader = new FileReader();
+        reader.onload = (loadEvent) => {
+          setAttachments((current) => [
+            ...current,
+            {
+              id,
+              name: file.name,
+              type: "file",
+              content: loadEvent.target?.result as string,
+            },
+          ]);
+        };
+        reader.readAsText(file);
+        return;
+      }
+
+      setAttachments((current) => [
+        ...current,
+        { id, name: file.name, type: "file" },
+      ]);
     });
     event.target.value = "";
     setAttachMenuOpen(false);
@@ -591,9 +696,6 @@ export default function App() {
               </div>
             </div>
 
-            <p className="text-xs text-muted-foreground text-center mt-2">
-              Powered by Grok AI
-            </p>
           </div>
 
           <input

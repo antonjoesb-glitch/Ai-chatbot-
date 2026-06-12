@@ -12,14 +12,6 @@ class Config:
     # Flask application settings
     PORT = int(os.environ.get('PORT', 5000))
     
-    # AI API credentials (supports Groq keys: gsk_... or xAI keys: xai-...)
-    GROK_API_KEY = os.environ.get('GROK_API_KEY')
-    AI_PROVIDER = os.environ.get('AI_PROVIDER', '').strip().lower()
-    GROK_API_URL = os.environ.get('GROK_API_URL', 'https://api.x.ai/v1').rstrip('/')
-    GROK_MODEL = os.environ.get('GROK_MODEL', '')
-    
-    # Request timeout for external API calls
-    GROK_TIMEOUT = int(os.environ.get('GROK_TIMEOUT', 30))
 
     # Conversational memory and history management settings
     MAX_HISTORY_LENGTH = int(os.environ.get('MAX_HISTORY_LENGTH', 20))
@@ -31,7 +23,6 @@ class Config:
     def validate():
         """Validates that necessary credentials are present."""
         errors = []
-        if not Config.GROK_API_KEY:
-            errors.append("GROK_API_KEY is not set in the environment variables.")
+        # No external API keys to validate for local model
         return errors
 

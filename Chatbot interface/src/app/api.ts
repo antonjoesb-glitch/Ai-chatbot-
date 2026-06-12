@@ -1,18 +1,25 @@
 export type ChatRole = "user" | "assistant" | "system";
 
-export interface ApiMessage {
-  role: ChatRole;
-  content: string;
+export interface ChatAttachment {
+  type: "image" | "file";
+  name: string;
+  data?: string;
+  content?: string;
 }
 
 export async function sendChatMessage(
   conversationId: string,
   message: string,
-): Promise<string> {
+  attachments: ChatAttachment[] = [],
+): Promise<{ response: string; title?: string }> {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ conversation_id: conversationId, message }),
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      message,
+      attachments,
+    }),
   });
 
   const data = await response.json();
@@ -20,7 +27,7 @@ export async function sendChatMessage(
     throw new Error(data.error || "Failed to send message.");
   }
 
-  return data.response as string;
+  return { response: data.response as string, title: data.title as string | undefined };
 }
 
 export async function deleteConversation(conversationId: string): Promise<void> {
